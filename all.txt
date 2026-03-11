@@ -1,0 +1,727 @@
+public class Book {
+    private String code;
+    private String title;
+    private LocalDate dop;
+
+    public Book() {
+    }
+     
+    public Book(String code, String title, LocalDate dop) {
+        this.code = code;
+        this.title = title;
+        this.dop = dop;
+    }
+
+    public String getCode() {
+        return code;
+    }
+
+    public String getTitle() {
+        return title;
+    }
+
+    public void setTitle(String title) {
+        this.title = title;
+    }
+
+    public LocalDate getDop() {
+        return dop;
+    }
+
+    public void setDop(LocalDate dop) {
+        this.dop = dop;
+    }
+
+    @Override
+    public int hashCode() {
+        int hash = 7;
+        hash = 89 * hash + Objects.hashCode(this.code);
+        return hash;
+    }
+
+    @Override
+    public boolean equals(Object obj) {
+        if (this == obj) {
+            return true;
+        }
+        if (obj == null) {
+            return false;
+        }
+        if (getClass() != obj.getClass()) {
+            return false;
+        }
+        final Book other = (Book) obj;
+        return Objects.equals(this.code, other.code);
+    }
+
+    @Override
+    public String toString() {
+        return title;
+    }            
+}
+
+public class DbConnect {
+    private static SQLiteDataSource datasource = new SQLiteDataSource();
+    
+    static{
+        datasource.setUrl("jdbc:sqlite:database/book.db");
+    }
+    
+    public static Connection getConnection() throws SQLException{
+        return datasource.getConnection();
+    }
+}
+
+public class BookService {
+
+    private String createQuery = "insert into book values(?,?,?)";
+    private String findAllQuery = "select * from book";
+    private String findByCodeQuery = "Select * from book where code = ?";
+    private String updateQuery = "update book set title=?, dop = ? where code = ?";
+    private String deleteQuery = "delete from book where code = ?";
+
+    public void create(Book book) throws SQLException {
+        try (
+                Connection con = DbConnect.getConnection(); PreparedStatement pstmt = con.prepareStatement(createQuery);) {
+
+            pstmt.setString(1, book.getCode());
+            pstmt.setString(2, book.getTitle());
+            pstmt.setString(3, book.getDop().toString());
+            pstmt.executeUpdate();
+
+        }
+    }
+
+    public List<Book> findAll() throws SQLException {
+        List<Book> ls = new ArrayList<>();
+        try (
+                Connection con = DbConnect.getConnection(); PreparedStatement pstmt = con.prepareStatement(findAllQuery);) {
+
+            ResultSet rs = pstmt.executeQuery();
+            while (rs.next()) {
+                String code = rs.getString(1);
+                String title = rs.getString(2);
+                String sdop = rs.getString(3);
+                LocalDate dop = LocalDate.parse(sdop);
+                Book book = new Book(code, title, dop);
+                ls.add(book);
+            }
+        }
+        return ls;
+    }
+
+    public Book findByCode(String code) throws SQLException {
+        try (Connection con = DbConnect.getConnection(); PreparedStatement pstmt = con.prepareStatement(findByCodeQuery);) {
+
+            pstmt.setString(1, code);
+            ResultSet rs = pstmt.executeQuery();
+            if (rs.next()) {
+                String title = rs.getString(2);
+                String sdop = rs.getString(3);
+                LocalDate dop = LocalDate.parse(sdop);
+                Book book = new Book(code, title, dop);
+                return book;
+            }
+        }
+        return null;
+    }
+
+    public void update(Book book) throws SQLException {
+        try (
+                Connection con = DbConnect.getConnection(); 
+                PreparedStatement pstmt = con.prepareStatement(updateQuery);
+                ) {
+            
+            pstmt.setString(1, book.getTitle());
+            pstmt.setString(2, book.getDop().toString());
+            pstmt.setString(3, book.getCode());
+            pstmt.executeUpdate();
+        }
+    }  
+}
+
+public class BookController {
+
+    private BookService service;
+
+    public BookController() {
+        this.service = new BookService();
+    }
+
+    public void create(Book book, Callback callback) {
+        new CreateWorker(book, callback).execute();
+    }
+
+    public void findAll(Callback callback) {
+        new FindAllWorker(callback).execute();
+    }
+
+    public void findByCode(String code, Callback callback) {
+        new FindByCodeWorker(code, callback).execute();
+    }
+    
+    public void update(Book book, Callback callback) {
+        new UpdateWorker(book, callback).execute();
+    }
+
+    private class CreateWorker extends SwingWorker<Void, Void> {
+
+        private Book book;
+        private Callback callback;
+        private Exception exception;
+
+        public CreateWorker(Book book, Callback callback) {
+            this.book = book;
+            this.callback = callback;
+        }
+
+        @Override
+        protected Void doInBackground() throws Exception {
+            try {
+                service.create(book);
+            } catch (SQLException ex) {
+                exception = ex;
+            }
+            return null;
+        }
+
+        @Override
+        protected void done() {
+            if (exception != null) {
+                callback.onError("Error saving book: " + exception.getMessage());
+            } else {
+                callback.onSuccess("Book saved successfully!");
+            }
+        }
+
+    }
+
+    private class FindByCodeWorker extends SwingWorker<Book, Void> {
+
+        private String code;
+        private Callback callback;
+        private Exception exception;
+
+        public FindByCodeWorker(String code, Callback callback) {
+            this.code = code;
+            this.callback = callback;
+        }
+
+        @Override
+        protected Book doInBackground() throws Exception {
+            try {
+                return service.findByCode(code);
+            } catch (SQLException ex) {
+                exception = ex;
+                return null;
+            }
+        }
+
+        @Override
+        protected void done() {
+            try {
+                Book book = get();
+                if (book != null) {
+                    callback.onFindByCode(book);
+                } else if (exception != null) {
+                    callback.onError("Error Loading Book: " + exception.getMessage());
+                } else {
+                    callback.onError("Book not found");
+                }
+            } catch (Exception ex) {
+                callback.onError("Error Loading Book: " + ex.getMessage());
+            }
+        }
+
+    }
+
+    private class FindAllWorker extends SwingWorker<List<Book>, Void> {
+
+        private Callback callback;
+        private Exception exception;
+
+        public FindAllWorker(Callback callback) {
+            this.callback = callback;
+        }
+
+        @Override
+        protected List<Book> doInBackground() throws Exception {
+            try {
+                return service.findAll();
+            } catch (SQLException e) {
+                this.exception = e;
+                return null;
+            }
+        }
+
+        @Override
+        protected void done() {
+            try {
+                List<Book> list = get();
+                if (list != null) {
+                    callback.onFindAll(list);
+                    callback.onSuccess("Loading Successful");
+                } else {
+                    callback.onError("Error loading books: " + exception.getMessage());
+                }
+            } catch (Exception ex) {
+                callback.onError("Error loading books: " + ex.getMessage());
+            }
+        }
+
+    }
+
+    private class UpdateWorker extends SwingWorker<Void, Void> {
+
+        private Book book;
+        private Callback callback;
+        private Exception exception;
+
+        public UpdateWorker(Book book, Callback callback) {
+            this.book = book;
+            this.callback = callback;
+        }
+
+        @Override
+        protected Void doInBackground() throws Exception {
+            try {
+                service.update(book);
+            } catch (SQLException ex) {
+                exception = ex;
+            }
+            return null;
+        }
+
+        @Override
+        protected void done() {
+            if (exception != null) {
+                callback.onError("Error saving book: " + exception.getMessage());
+            } else {
+                callback.onSuccess("Book saved successfully!");
+            }
+        }
+
+    }
+
+    public interface Callback {
+
+        void onSuccess(String message);
+
+        void onError(String message);
+
+        void onFindAll(List<Book> list);
+
+        void onFindByCode(Book book);
+
+    }
+}
+
+
+public class MainFrame extends javax.swing.JFrame {
+
+    private static final java.util.logging.Logger logger = java.util.logging.Logger.getLogger(MainFrame.class.getName());
+    private BookController controller;
+
+    private DefaultListModel<Book> listModel = new DefaultListModel();
+    private Book current = null;
+
+    /**
+     * Creates new form NewJFrame
+     */
+    public MainFrame() {
+        controller = new BookController();
+        initComponents();
+        status.setForeground(Color.blue);
+        this.setLocationRelativeTo(null);
+        resetAll();
+    }
+
+    /**
+     * This method is called from within the constructor to initialize the form.
+     * WARNING: Do NOT modify this code. The content of this method is always
+     * regenerated by the Form Editor.
+     */
+    @SuppressWarnings("unchecked")
+    // <editor-fold defaultstate="collapsed" desc="Generated Code">                          
+    private void initComponents() {
+
+        jPanel1 = new javax.swing.JPanel();
+        jScrollPane1 = new javax.swing.JScrollPane();
+        list = new javax.swing.JList<>();
+        loadBtn = new javax.swing.JButton();
+        jPanel2 = new javax.swing.JPanel();
+        jLabel1 = new javax.swing.JLabel();
+        codeField = new javax.swing.JTextField();
+        jLabel2 = new javax.swing.JLabel();
+        titleField = new javax.swing.JTextField();
+        jLabel3 = new javax.swing.JLabel();
+        dopField = new javax.swing.JTextField();
+        jPanel4 = new javax.swing.JPanel();
+        newBtn = new javax.swing.JButton();
+        editBtn = new javax.swing.JButton();
+        saveBtn = new javax.swing.JButton();
+        jPanel3 = new javax.swing.JPanel();
+        jLabel4 = new javax.swing.JLabel();
+        status = new javax.swing.JLabel();
+
+        setDefaultCloseOperation(javax.swing.WindowConstants.EXIT_ON_CLOSE);
+        setTitle("Book App");
+
+        jPanel1.setBorder(javax.swing.BorderFactory.createTitledBorder("List of Books"));
+
+        list.setModel(listModel);
+        list.setSelectionMode(javax.swing.ListSelectionModel.SINGLE_SELECTION);
+        list.addListSelectionListener(new javax.swing.event.ListSelectionListener() {
+            public void valueChanged(javax.swing.event.ListSelectionEvent evt) {
+                listValueChanged(evt);
+            }
+        });
+        jScrollPane1.setViewportView(list);
+
+        loadBtn.setText("Load");
+        loadBtn.addActionListener(new java.awt.event.ActionListener() {
+            public void actionPerformed(java.awt.event.ActionEvent evt) {
+                loadBtnActionPerformed(evt);
+            }
+        });
+
+        javax.swing.GroupLayout jPanel1Layout = new javax.swing.GroupLayout(jPanel1);
+        jPanel1.setLayout(jPanel1Layout);
+        jPanel1Layout.setHorizontalGroup(
+            jPanel1Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
+            .addGroup(jPanel1Layout.createSequentialGroup()
+                .addContainerGap()
+                .addGroup(jPanel1Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
+                    .addGroup(javax.swing.GroupLayout.Alignment.TRAILING, jPanel1Layout.createSequentialGroup()
+                        .addGap(0, 109, Short.MAX_VALUE)
+                        .addComponent(loadBtn))
+                    .addComponent(jScrollPane1, javax.swing.GroupLayout.PREFERRED_SIZE, 0, Short.MAX_VALUE))
+                .addContainerGap())
+        );
+        jPanel1Layout.setVerticalGroup(
+            jPanel1Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
+            .addGroup(jPanel1Layout.createSequentialGroup()
+                .addContainerGap()
+                .addComponent(jScrollPane1, javax.swing.GroupLayout.DEFAULT_SIZE, 165, Short.MAX_VALUE)
+                .addGap(18, 18, 18)
+                .addComponent(loadBtn)
+                .addContainerGap())
+        );
+
+        jPanel2.setBorder(javax.swing.BorderFactory.createTitledBorder("Create & Edit Book"));
+
+        jLabel1.setHorizontalAlignment(javax.swing.SwingConstants.RIGHT);
+        jLabel1.setText("Code");
+
+        jLabel2.setHorizontalAlignment(javax.swing.SwingConstants.RIGHT);
+        jLabel2.setText("Title");
+
+        jLabel3.setHorizontalAlignment(javax.swing.SwingConstants.RIGHT);
+        jLabel3.setText("Date");
+
+        jPanel4.setLayout(new java.awt.FlowLayout(java.awt.FlowLayout.RIGHT));
+
+        newBtn.setText("New");
+        newBtn.addActionListener(new java.awt.event.ActionListener() {
+            public void actionPerformed(java.awt.event.ActionEvent evt) {
+                newBtnActionPerformed(evt);
+            }
+        });
+        jPanel4.add(newBtn);
+
+        editBtn.setText("Edit");
+        editBtn.addActionListener(new java.awt.event.ActionListener() {
+            public void actionPerformed(java.awt.event.ActionEvent evt) {
+                editBtnActionPerformed(evt);
+            }
+        });
+        jPanel4.add(editBtn);
+
+        saveBtn.setText("Save");
+        saveBtn.addActionListener(new java.awt.event.ActionListener() {
+            public void actionPerformed(java.awt.event.ActionEvent evt) {
+                saveBtnActionPerformed(evt);
+            }
+        });
+        jPanel4.add(saveBtn);
+
+        javax.swing.GroupLayout jPanel2Layout = new javax.swing.GroupLayout(jPanel2);
+        jPanel2.setLayout(jPanel2Layout);
+        jPanel2Layout.setHorizontalGroup(
+            jPanel2Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
+            .addGroup(javax.swing.GroupLayout.Alignment.TRAILING, jPanel2Layout.createSequentialGroup()
+                .addContainerGap()
+                .addGroup(jPanel2Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.TRAILING)
+                    .addComponent(jPanel4, javax.swing.GroupLayout.DEFAULT_SIZE, 245, Short.MAX_VALUE)
+                    .addGroup(jPanel2Layout.createSequentialGroup()
+                        .addGroup(jPanel2Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
+                            .addComponent(jLabel1, javax.swing.GroupLayout.Alignment.TRAILING, javax.swing.GroupLayout.PREFERRED_SIZE, 45, javax.swing.GroupLayout.PREFERRED_SIZE)
+                            .addComponent(jLabel2, javax.swing.GroupLayout.Alignment.TRAILING, javax.swing.GroupLayout.PREFERRED_SIZE, 45, javax.swing.GroupLayout.PREFERRED_SIZE)
+                            .addComponent(jLabel3, javax.swing.GroupLayout.Alignment.TRAILING, javax.swing.GroupLayout.PREFERRED_SIZE, 45, javax.swing.GroupLayout.PREFERRED_SIZE))
+                        .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.UNRELATED)
+                        .addGroup(jPanel2Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
+                            .addComponent(codeField)
+                            .addComponent(titleField)
+                            .addComponent(dopField))))
+                .addContainerGap())
+        );
+        jPanel2Layout.setVerticalGroup(
+            jPanel2Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
+            .addGroup(jPanel2Layout.createSequentialGroup()
+                .addContainerGap()
+                .addGroup(jPanel2Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.BASELINE)
+                    .addComponent(jLabel1)
+                    .addComponent(codeField, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE))
+                .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
+                .addGroup(jPanel2Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.BASELINE)
+                    .addComponent(jLabel2)
+                    .addComponent(titleField, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE))
+                .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
+                .addGroup(jPanel2Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.BASELINE)
+                    .addComponent(jLabel3)
+                    .addComponent(dopField, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE))
+                .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED, javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE)
+                .addComponent(jPanel4, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE)
+                .addContainerGap())
+        );
+
+        jPanel3.setBorder(javax.swing.BorderFactory.createEtchedBorder());
+        jPanel3.setLayout(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT));
+
+        jLabel4.setText("Status:");
+        jPanel3.add(jLabel4);
+        jPanel3.add(status);
+
+        javax.swing.GroupLayout layout = new javax.swing.GroupLayout(getContentPane());
+        getContentPane().setLayout(layout);
+        layout.setHorizontalGroup(
+            layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
+            .addGroup(layout.createSequentialGroup()
+                .addContainerGap()
+                .addGroup(layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
+                    .addGroup(layout.createSequentialGroup()
+                        .addComponent(jPanel1, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE)
+                        .addGap(18, 18, 18)
+                        .addComponent(jPanel2, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE)
+                        .addGap(0, 0, Short.MAX_VALUE))
+                    .addComponent(jPanel3, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE))
+                .addContainerGap())
+        );
+        layout.setVerticalGroup(
+            layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
+            .addGroup(layout.createSequentialGroup()
+                .addContainerGap()
+                .addGroup(layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING, false)
+                    .addComponent(jPanel1, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE)
+                    .addComponent(jPanel2, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE))
+                .addGap(18, 41, Short.MAX_VALUE)
+                .addComponent(jPanel3, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE)
+                .addContainerGap())
+        );
+
+        pack();
+    }// </editor-fold>                        
+
+    private void loadBtnActionPerformed(java.awt.event.ActionEvent evt) {                                        
+        resetAll();
+        controller.findAll(new BookCallback());
+    }                                       
+
+    private void newBtnActionPerformed(java.awt.event.ActionEvent evt) {                                       
+        newPressed();
+    }                                      
+
+    private void editBtnActionPerformed(java.awt.event.ActionEvent evt) {                                        
+        editPressed();
+    }                                       
+
+    private void saveBtnActionPerformed(java.awt.event.ActionEvent evt) {                                        
+        savePressed();
+        //Validation
+        if (!validateFields()) {
+            editPressed();
+            return;
+        }
+        if (!list.isSelectionEmpty()) {
+            current.setTitle(titleField.getText().trim());
+            current.setDop(LocalDate.parse(dopField.getText().trim()));
+            controller.update(current, new BookCallback());
+        } else {
+            current = new Book(codeField.getText().trim(), titleField.getText().trim(), LocalDate.parse(dopField.getText().trim()));
+            controller.create(current, new BookCallback());
+            listModel.add(listModel.getSize(), current);
+            list.setSelectedIndex(listModel.getSize() - 1);
+        }
+
+    }                                       
+
+    private void listValueChanged(javax.swing.event.ListSelectionEvent evt) {                                  
+        if (!list.isSelectionEmpty()) {
+            selectionPerformed();
+            current = list.getSelectedValue();
+            codeField.setText(current.getCode());
+            titleField.setText(current.getTitle());
+            dopField.setText(current.getDop().toString());
+        }
+    }                                 
+
+    /**
+     * @param args the command line arguments
+     */
+    public static void main(String args[]) {
+        /* Set the Nimbus look and feel */
+        //<editor-fold defaultstate="collapsed" desc=" Look and feel setting code (optional) ">
+        /* If Nimbus (introduced in Java SE 6) is not available, stay with the default look and feel.
+         * For details see http://download.oracle.com/javase/tutorial/uiswing/lookandfeel/plaf.html 
+         */
+        try {
+            for (javax.swing.UIManager.LookAndFeelInfo info : javax.swing.UIManager.getInstalledLookAndFeels()) {
+                if ("Nimbus".equals(info.getName())) {
+                    javax.swing.UIManager.setLookAndFeel(info.getClassName());
+                    break;
+                }
+            }
+        } catch (ReflectiveOperationException | javax.swing.UnsupportedLookAndFeelException ex) {
+            logger.log(java.util.logging.Level.SEVERE, null, ex);
+        }
+        //</editor-fold>
+
+        /* Create and display the form */
+        java.awt.EventQueue.invokeLater(() -> new MainFrame().setVisible(true));
+    }
+
+    // Variables declaration - do not modify                     
+    private javax.swing.JTextField codeField;
+    private javax.swing.JTextField dopField;
+    private javax.swing.JButton editBtn;
+    private javax.swing.JLabel jLabel1;
+    private javax.swing.JLabel jLabel2;
+    private javax.swing.JLabel jLabel3;
+    private javax.swing.JLabel jLabel4;
+    private javax.swing.JPanel jPanel1;
+    private javax.swing.JPanel jPanel2;
+    private javax.swing.JPanel jPanel3;
+    private javax.swing.JPanel jPanel4;
+    private javax.swing.JScrollPane jScrollPane1;
+    private javax.swing.JList<Book> list;
+    private javax.swing.JButton loadBtn;
+    private javax.swing.JButton newBtn;
+    private javax.swing.JButton saveBtn;
+    private javax.swing.JLabel status;
+    private javax.swing.JTextField titleField;
+    // End of variables declaration                   
+
+    private void resetAll() {
+        codeField.setEditable(false);
+        titleField.setEditable(false);
+        dopField.setEditable(false);
+        newBtn.setEnabled(true);
+        editBtn.setEnabled(false);
+        saveBtn.setEnabled(false);
+        codeField.setText("");
+        titleField.setText("");
+        dopField.setText("");
+    }
+
+    private void newPressed() {
+        codeField.setEditable(true);
+        titleField.setEditable(true);
+        dopField.setEditable(true);
+        newBtn.setEnabled(false);
+        editBtn.setEnabled(false);
+        saveBtn.setEnabled(true);
+        list.clearSelection();
+        current = null;
+        codeField.setText("");
+        titleField.setText("");
+        dopField.setText("");
+        codeField.requestFocus();
+        status.setText("");
+        status.setForeground(Color.blue);        
+    }
+
+    private void editPressed() {
+        codeField.setEditable(false);
+        titleField.setEditable(true);
+        dopField.setEditable(true);
+        newBtn.setEnabled(true);
+        editBtn.setEnabled(false);
+        saveBtn.setEnabled(true);
+        titleField.requestFocus();
+    }
+
+    private void savePressed() {
+        codeField.setEditable(false);
+        titleField.setEditable(false);
+        dopField.setEditable(false);
+        newBtn.setEnabled(true);
+        editBtn.setEnabled(true);
+        saveBtn.setEnabled(false);
+    }
+
+    private void selectionPerformed() {
+        codeField.setEditable(false);
+        titleField.setEditable(false);
+        dopField.setEditable(false);
+        newBtn.setEnabled(true);
+        editBtn.setEnabled(true);
+        saveBtn.setEnabled(false);
+    }
+
+    private boolean validateFields() {
+        String scode = codeField.getText();
+        if (Objects.isNull(codeField) || scode.trim().isEmpty()) {
+            status.setForeground(Color.red);
+            status.setText("Should provide a Code!");
+            return false;
+        }
+        String stitle = titleField.getText();
+        if (Objects.isNull(stitle) || stitle.trim().isEmpty()) {
+            status.setForeground(Color.red);
+            status.setText("Should provide a Title!");
+            return false;
+        }
+        String sdop = dopField.getText();
+        if (Objects.isNull(sdop) || sdop.trim().isEmpty()) {
+            status.setForeground(Color.red);
+            status.setText("Should provide a Date!");
+            return false;
+        } else {
+            try {
+                LocalDate.parse(sdop);
+            } catch (DateTimeParseException ex) {
+                status.setForeground(Color.red);
+                status.setText("Should provide a Correct Date!");
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private class BookCallback implements BookController.Callback {
+
+        @Override
+        public void onSuccess(String message) {
+            status.setForeground(Color.blue);
+            status.setText(message);
+        }
+
+        @Override
+        public void onError(String message) {
+            JOptionPane.showMessageDialog(MainFrame.this, message, "Error", JOptionPane.ERROR_MESSAGE);
+        }
+
+        @Override
+        public void onFindAll(List<Book> list) {
+            listModel.clear();
+            listModel.addAll(list);
+        }
+
+        @Override
+        public void onFindByCode(Book book) {
+
+        }
+
+    }
+}
+
